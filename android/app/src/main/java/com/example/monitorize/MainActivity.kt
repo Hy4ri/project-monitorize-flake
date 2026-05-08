@@ -21,11 +21,13 @@ class MainActivity : ComponentActivity() {
 
     private var decoder: H264Decoder? = null
     private var receiver: StreamReceiver? = null
-    private val status = mutableStateOf("Idle")
+    private val status = mutableStateOf("Ready")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Force the window to be black
+        window.setBackgroundDrawableResource(android.R.color.black)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         setContent {
@@ -33,6 +35,8 @@ class MainActivity : ComponentActivity() {
                 StreamSurface(
                     modifier = Modifier.fillMaxSize(),
                     onSurfaceReady = { sv ->
+                        // REQUIRED: Pierce through all UI layers
+                        sv.setZOrderOnTop(true) 
                         sv.holder.addCallback(object : SurfaceHolder.Callback {
                             override fun surfaceCreated(holder: SurfaceHolder) {
                                 startStream(holder.surface)
@@ -44,12 +48,14 @@ class MainActivity : ComponentActivity() {
                         })
                     }
                 )
+                
+                // Status Overlay
                 Text(
                     text = status.value,
-                    color = Color.White,
+                    color = Color.Green,
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(16.dp)
+                        .padding(32.dp)
                 )
             }
         }
@@ -59,9 +65,7 @@ class MainActivity : ComponentActivity() {
         val d = H264Decoder(surface)
         decoder = d
         receiver = StreamReceiver(d).also {
-            it.onStatusChange = { msg -> 
-                runOnUiThread { status.value = msg } 
-            }
+            it.onStatusChange = { msg -> runOnUiThread { status.value = msg } }
             it.start()
         }
     }
@@ -71,10 +75,5 @@ class MainActivity : ComponentActivity() {
         receiver = null
         decoder?.release()
         decoder = null
-    }
-    
-    override fun onDestroy() {
-        super.onDestroy()
-        stopStream()
     }
 }
