@@ -7,6 +7,9 @@
   [![Tech](https://img.shields.io/badge/Tech-Wayland%20%7C%20GStreamer%20%7C%20ADB-orange)](#)
 </div>
 
+> **🚧 Project Status: Active Development / Proof of Concept** <br>
+> *Monitorize is currently in its early building stages. It is not yet a finalized or consumer-ready product, but rather a vision actively transforming into reality. The architecture is defined, and core systems are being wired together. Please be aware that setup is currently manual, and features are heavily work-in-progress.*
+
 ---
 
 ## 📖 Overview
