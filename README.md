@@ -1,133 +1,189 @@
 <div align="center">
-  <h1>🚀 Monitorize</h1>
-  <p><strong>A zero-lag, USB-tethered secondary display solution for Linux hosts and Android tablets.</strong></p>
-  
+  <h1>🖥️ Monitorize</h1>
+  <p><strong>Turn your Android tablet into a smooth, low-latency secondary monitor for Linux — over USB.</strong></p>
+
   [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
   [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Android-lightgrey)](#)
   [![Tech](https://img.shields.io/badge/Tech-Wayland%20%7C%20GStreamer%20%7C%20ADB-orange)](#)
+  [![Status](https://img.shields.io/badge/Status-Working%20%E2%9C%85-brightgreen)](#)
 </div>
 
-> **🚧 Project Status: Active Development / Proof of Concept** <br>
-> *Monitorize is currently in its early building stages. It is not yet a finalized or consumer-ready product, but rather a vision actively transforming into reality. The architecture is defined, and core systems are being wired together. Please be aware that setup is currently manual, and features are heavily work-in-progress.*
+> **Project Status: Working & Actively Developed** — Core pipeline is fully functional. Screen mirroring at 1280×800 @ 60fps with hardware-accelerated H.264 decode on Android via ADB over USB.
 
 ---
 
 ## 📖 Overview
 
-**Monitorize** transforms your Android tablet into a high-performance secondary monitor for your Linux desktop. Built for modern Linux environments (Wayland) and Android devices, it leverages native APIs and hardware acceleration to deliver a buttery-smooth 60fps experience via a simple USB connection. No Wi-Fi dependency. No bloat. Just a seamless multi-monitor experience.
+**Monitorize** transforms your Android tablet into a high-performance secondary monitor for your Linux desktop. It uses a PipeWire screen capture → GStreamer H.264 encode → ADB USB tunnel → Android `MediaCodec` hardware decode pipeline to deliver smooth, low-latency video with no Wi-Fi dependency.
 
-Think of it as *Spacedesk* or *Duet Display*, but crafted explicitly for Linux and Android power users.
+Think *Spacedesk* or *Duet Display*, but open-source and built for Linux/Wayland power users.
 
-### 🌟 Key Features
+### ✅ What Works Right Now
 
-- **⚡ Zero-Lag USB Transport**: Uses ADB reverse/forward port tunneling for uninterrupted, high-bandwidth video streaming over a wired USB connection.
-- **🖥️ Native Wayland Integration**: Uses `krfb-virtualmonitor` to create a virtual display in KDE Plasma that acts exactly like a physical monitor.
-- **🎥 Hardware Accelerated Encoding**: Utilizes `wf-recorder` and GStreamer (`x264enc`) to capture and encode Wayland surfaces efficiently without hogging host CPU.
-- **📱 Native Android Decoding**: The companion Android app decodes raw H.264 streams directly via `MediaCodec` and renders to a `SurfaceView` for minimal latency.
-- **🔋 Battery & Resource Efficient**: Bypasses Wi-Fi overhead and unnecessary touch input loops, focusing purely on high-fidelity display extension.
+- **60fps, 1280×800** hardware-decoded stream on Samsung Galaxy Tab S7 FE
+- **~100ms latency** over USB ADB tunnel
+- **Crystal-clear output** — no pink artifacts, no chroma corruption
+- **Smooth mouse cursor** — minimal ghosting or trails
+- Fully hardware-accelerated decode via Android `MediaCodec`
+- No Wi-Fi — runs entirely over USB
 
 ---
 
 ## 🏗️ Architecture
 
-The system operates in a Host-Client model connected via an ADB USB tether.
-
-```mermaid
-flowchart TD
-    subgraph Fedora Host
-        KDE[krfb-virtualmonitor<br/>Creates 'TabletDisplay']
-        WF[wf-recorder<br/>Captures Wayland surface]
-        GST[GStreamer<br/>x264enc H.264 encode]
-        
-        KDE -->|YUV420 Frames| WF
-        WF -->|Raw Stream Pipe| GST
-        GST -->|tcpclientsink: 7110| ADB_FWD[ADB Forward<br/>TCP: 7110]
-    end
-
-    subgraph USB Connection
-        ADB_FWD == ADB Tether ==> ADB_REV[Android ServerSocket<br/>Port: 7110]
-    end
-
-    subgraph Android Tablet
-        APP[Android App]
-        MC[MediaCodec Decoder]
-        SV[SurfaceView]
-        
-        ADB_REV -->|H.264 Stream| APP
-        APP --> MC
-        MC -->|Decoded Frames| SV
-    end
+```
+Fedora KDE (Wayland)
+│
+├─ krfb-virtualmonitor ──► Creates virtual "TabletDisplay" output in KWin
+│
+├─ PipeWire ScreenCast Portal ──► Captures the virtual display as a PipeWire stream
+│
+└─ GStreamer Pipeline:
+     pipewiresrc → videorate → videoconvert → videoscale
+     → x264enc (zerolatency, ultrafast, 15 Mbps)
+     → h264parse → tcpclientsink → 127.0.0.1:7110
+                                          │
+                               ADB forward tcp:7110
+                                          │
+                               USB Cable (not Wi-Fi)
+                                          │
+Android (Samsung Tab S7 FE)
+│
+├─ ServerSocket:7110 ──► Receives raw H.264 Annex B byte stream
+│
+└─ MediaCodec (hardware decoder)
+     → SurfaceView (fullscreen)
 ```
 
 ---
 
 ## 🛠️ Prerequisites
 
-### Host (Linux)
-- **OS**: Fedora (or any modern distribution running Wayland / KDE Plasma).
-- **GPU**: Supports Hybrid Graphics (e.g., Intel iGPU + AMD/Nvidia dGPU).
-- **Dependencies**: 
-  - `krfb-virtualmonitor` (for virtual monitor creation)
-  - `wf-recorder` (Wayland screen recorder)
-  - `gstreamer1` & `gstreamer1-plugins-bad-free` (for encoding and streaming)
-  - `android-tools` (for ADB)
+### Linux Host
+| Requirement | Notes |
+|-------------|-------|
+| Fedora 44 / KDE Plasma 6 | Any modern Wayland compositor should work |
+| `krfb` | Virtual monitor creation — `sudo dnf install krfb` |
+| `gstreamer1-plugins-bad-free` | PipeWire source, x264 encoder |
+| `gstreamer1-plugins-ugly-free` | x264enc plugin |
+| `android-tools` | ADB — `sudo dnf install android-tools` |
+| `python3-dbus` | For the fallback script |
+| `python3-gobject` | GLib mainloop |
 
-### Client (Android)
-- **OS**: Android 14+ (Tested on Samsung Galaxy Tab S7 FE / One UI).
-- **Requirements**: USB Debugging enabled in Developer Options.
+### Android Tablet
+| Requirement | Notes |
+|-------------|-------|
+| Android 9+ | Tested on Samsung Galaxy Tab S7 FE (One UI 6) |
+| USB Debugging enabled | Developer Options → USB Debugging |
+| USB cable | High-quality USB-C cable recommended |
 
 ---
 
-## 🚀 Quick Start Setup
+## 🚀 Setup & Run
 
-### 1. Host Configuration (Fedora KDE)
-
-1. Create a virtual display using KDE's Virtual Monitor feature:
-   ```bash
-   krfb-virtualmonitor --name "TabletDisplay" --resolution 2560x1600
-   ```
-2. Open your KDE Display Settings. You will see a new monitor named `TabletDisplay`. Position it alongside your primary screen just like a physical monitor.
-
-### 2. Connect Your Tablet
-
-1. Connect the Android tablet to your Linux host via a high-quality USB cable.
-2. Ensure **USB Debugging** is enabled on the tablet and allow the connection from your computer.
-3. Forward the TCP port using ADB:
-   ```bash
-   adb forward tcp:7110 tcp:7110
-   ```
-
-### 3. Launch the Android App
-
-1. Build the Android app located in the `/android` directory using Android Studio or Gradle, and install it on your tablet.
-2. Open the **Monitorize** app. It will immediately begin listening on port `7110` for an incoming H.264 stream.
-
-### 4. Start the Stream
-
-Pipe the Wayland display output through `wf-recorder` into GStreamer to stream the video directly to the tablet:
+### Step 1 — Create the virtual monitor (Linux)
 
 ```bash
-wf-recorder -o "TabletDisplay" -c rawvideo -m v4l2 -x yuv420p -f - | \
-gst-launch-1.0 fdsrc ! rawvideoparse use-sink-caps=false width=2560 height=1600 format=i420 framerate=60/1 ! \
-x264enc tune=zerolatency bitrate=8000 speed-preset=ultrafast ! \
-h264parse ! tcpclientsink host=127.0.0.1 port=7110
+krfb-virtualmonitor --resolution 1280x800 --name TabletDisplay --password test123 --port 5900
 ```
 
-> **Pro-Tip:** You can adjust the `bitrate=8000` parameter depending on your USB connection quality and required visual fidelity.
+Leave this running. Open **KDE System Settings → Display & Monitor** and position `TabletDisplay` as an extended display.
+
+### Step 2 — Connect tablet and set up ADB
+
+```bash
+# Connect tablet via USB, allow USB debugging prompt on tablet
+adb devices          # should show your device as "device" (not unauthorized)
+adb forward tcp:7110 tcp:7110
+```
+
+### Step 3 — Build and install the Android app
+
+```bash
+cd android/
+./gradlew installDebug
+adb shell am start -n com.example.monitorize/.MainActivity
+```
+
+The app will show **"Waiting for connection…"** — keep it open.
+
+### Step 4 — Start streaming
+
+```bash
+python3 linux/monitorize_fallback.py
+```
+
+In the KDE screencast picker that appears, select **TabletDisplay**.
+
+The tablet should immediately show your Linux desktop at 1280×800 @ 60fps.
 
 ---
 
-## 🧠 Why USB Over Wi-Fi?
-Wi-Fi introduces latency spikes and packet loss that significantly degrade a desktop experience. A hardwired USB connection ensures consistent frame delivery, minimizes host encoder back-pressure, and provides a true, responsive monitor-like feel with zero perceivable lag.
+## 📁 Project Structure
+
+```
+Monitorize/
+├── android/                        # Android app (Kotlin + Compose)
+│   └── app/src/main/java/com/example/monitorize/
+│       ├── MainActivity.kt         # App entry, surface setup
+│       ├── StreamReceiver.kt       # TCP socket → raw H.264 byte reader
+│       ├── H264Decoder.kt          # MediaCodec hardware decoder
+│       └── StreamScreen.kt         # SurfaceView composable
+│
+└── linux/
+    ├── monitorize_fallback.py      # ✅ Main launcher (PipeWire portal)
+    └── monitorize.sh               # Alternative (wf-recorder pipeline)
+```
+
+---
+
+## ⚙️ Encoder Configuration
+
+The GStreamer pipeline is tuned for minimum latency over USB:
+
+| Parameter | Value | Reason |
+|-----------|-------|--------|
+| `speed-preset` | `ultrafast` | Minimum encode latency |
+| `tune` | `zerolatency` | No frame buffering in encoder |
+| `bitrate` | `15000 kbps` | High quality at 1280×800@60fps |
+| `key-int-max` | `30` | IDR every 500ms for error recovery |
+| `bframes` | `0` | No B-frames — zero reorder delay |
+| `ref` | `1` | Single reference frame |
+| `rc-lookahead` | `0` | No lookahead — encode immediately |
+| `vbv-bufsize` | `1000` | ~67ms VBV buffer (low latency) |
+| `queue` | `1 buffer, leaky` | Drop old frames, show latest |
+
+---
+
+## 🧠 Technical Notes
+
+### Why ADB over USB instead of Wi-Fi?
+Wi-Fi introduces variable latency (10–100ms jitter) and packet loss that causes macro-block glitches. USB ADB gives consistent ~1ms transport latency and full USB 3.0 bandwidth (~400 MB/s).
+
+### Why raw Annex B chunks instead of NAL-aligned feeding?
+Samsung Galaxy Tab S7 FE's Qualcomm Snapdragon 750G MediaCodec decoder handles Annex B start codes natively. Manually splitting NALs and setting `BUFFER_FLAG_CODEC_CONFIG` on SPS/PPS caused full-frame chroma corruption on this device. Raw chunk feeding is both simpler and more compatible.
+
+### Why no `KEY_STRIDE` / `KEY_SLICE_HEIGHT` in MediaFormat?
+These keys describe the decoder's output buffer layout in **ByteBuffer** mode only. When decoding to a `Surface` (which this app does), the hardware decoder manages its own `GraphicBuffer` stride internally. Setting them in the configure format caused full-frame pink chroma corruption.
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] Touch input forwarding (tap on tablet → mouse click on host)
+- [ ] Auto-detect resolution from SPS NAL unit
+- [ ] Auto-start on USB connect (Android foreground service)
+- [ ] Resolution/FPS selection UI on Android
+- [ ] Support for `monitorize.sh` (wf-recorder path) alongside fallback
 
 ---
 
 ## 📄 License
 
-This project is licensed under the **GNU General Public License v3.0 (GPLv3)**. This ensures the project remains free and open source. See the `LICENSE` file for more details.
+Licensed under the **GNU General Public License v3.0**. See `LICENSE` for details.
 
 ---
 
 <div align="center">
-  <sub>Built with ❤️ by Vinnavan | Expanding your digital workspace, one pixel at a time.</sub>
+  <sub>Built with ❤️ by Vinnavan | Expanding your workspace, one pixel at a time.</sub>
 </div>
