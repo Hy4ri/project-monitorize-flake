@@ -16,7 +16,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.zIndex
 
 class MainActivity : ComponentActivity() {
 
@@ -27,7 +26,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        window.setBackgroundDrawableResource(android.R.color.black)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         setContent {
@@ -35,6 +33,8 @@ class MainActivity : ComponentActivity() {
                 StreamSurface(
                     modifier = Modifier.fillMaxSize(),
                     onSurfaceReady = { sv ->
+                        // MediaOverlay keeps UI (Text) visible on top of video
+                        sv.setZOrderMediaOverlay(true) 
                         sv.holder.addCallback(object : SurfaceHolder.Callback {
                             override fun surfaceCreated(holder: SurfaceHolder) {
                                 startStream(holder.surface)
@@ -47,10 +47,7 @@ class MainActivity : ComponentActivity() {
                 Text(
                     text = status.value,
                     color = Color.Green,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(32.dp)
-                        .zIndex(1f)
+                    modifier = Modifier.align(Alignment.TopStart).padding(32.dp)
                 )
             }
         }

@@ -5,9 +5,9 @@ from gi.repository import GLib
 
 PORT    = 7110
 WIDTH   = 1280
-HEIGHT  = 800
-FPS     = 30
-BITRATE = 6000
+HEIGHT  = 720
+FPS     = 24
+BITRATE = 20000
 
 DBusGMainLoop(set_as_default=True)
 loop    = GLib.MainLoop()
@@ -36,21 +36,22 @@ def launch_streaming(fd, node_id):
 
     # change this line to switch between file test and live stream
     #sink = "matroskamux ! filesink location=/tmp/capture_test.mkv"
-    sink = f"tcpclientsink host=127.0.0.1 port={PORT} sync=false"
+    sink = f"tcpclientsink host=10.190.255.232 port={PORT} sync=false"
     # sink = f"tcpclientsink host=127.0.0.1 port={PORT} sync=false"
 
     pipeline = (
-        f"gst-launch-1.0 -e -v "
-        f"pipewiresrc fd={fd} path={node_id} do-timestamp=true always-copy=true ! "
-        f"videorate ! video/x-raw,framerate={FPS}/1 ! "
-        f"queue max-size-buffers=4 leaky=downstream ! "
-        f"videoconvert n-threads=4 ! videoscale ! "
-        f"video/x-raw,format=I420,width={WIDTH},height={HEIGHT} ! "
-        f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={BITRATE} "
-        f"key-int-max=30 byte-stream=true ! "
-        f"h264parse config-interval=1 ! "
-        f"{sink}"
-    )
+    f"gst-launch-1.0 -e -v "
+    f"pipewiresrc fd={fd} path={node_id} do-timestamp=true always-copy=true ! "
+    f"videorate ! video/x-raw,framerate={FPS}/1 ! "
+    f"queue max-size-buffers=4 leaky=downstream ! "
+    f"videoconvert n-threads=4 ! videoscale ! "
+    f"video/x-raw,format=I420,width={WIDTH},height={HEIGHT} ! "
+    f"x264enc tune=zerolatency speed-preset=ultrafast bitrate={BITRATE} "
+    f"key-int-max=15 byte-stream=true option-string=\"bframes=0:ref=1\" ! "
+    f"h264parse config-interval=-1 ! "
+    f"video/x-h264,stream-format=byte-stream,alignment=nal ! "
+    f"{sink}"
+)
 
     print(f"\n[GStreamer] {pipeline}\n")
     print("[Monitorize] Streaming. Ctrl+C to stop.\n")
