@@ -9,10 +9,11 @@ import os
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QStackedWidget, QFrame, QPlainTextEdit,
-    QComboBox,
+    QComboBox, QCheckBox, QSystemTrayIcon, QMenu,
+    QDialog, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer
-from PyQt6.QtGui import QColor, QPalette, QFont, QTextCursor
+from PyQt6.QtGui import QColor, QPalette, QFont, QTextCursor, QIcon, QPixmap, QPainter
 
 # ---------------------------------------------------------------------------
 # Dark stylesheet
@@ -177,6 +178,24 @@ QLabel#portalHint {
     font-weight: 600;
     color: #9fa1dd;
 }
+
+QCheckBox#trayCheck {
+    font-size: 13px;
+    color: #7070aa;
+    spacing: 8px;
+}
+QCheckBox#trayCheck:hover { color: #b0b2d8; }
+QCheckBox#trayCheck::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid #3a3e72;
+    border-radius: 4px;
+    background-color: #1a1b2e;
+}
+QCheckBox#trayCheck::indicator:checked {
+    background-color: #5254d8;
+    border-color: #5254d8;
+}
 """
 
 # ---------------------------------------------------------------------------
@@ -191,6 +210,40 @@ def hr() -> QFrame:
 
 def vspace(n: int) -> int:
     return n  # used as argument to addSpacing
+
+def _make_tray_icon() -> QIcon:
+    """Generate a simple coloured square icon for the system tray."""
+    px = QPixmap(64, 64)
+    px.fill(Qt.GlobalColor.transparent)
+    p = QPainter(px)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setBrush(QColor("#5254d8"))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawEllipse(4, 4, 56, 56)
+    p.setBrush(QColor("#ffffff"))
+    p.drawEllipse(20, 20, 24, 24)
+    p.end()
+    return QIcon(px)
+
+
+# ---------------------------------------------------------------------------
+# Desktop-environment detection
+# ---------------------------------------------------------------------------
+
+def detect_desktop_environment() -> str:
+    """
+    Return "kde", "gnome", or "" (unknown) based on environment variables.
+    Reads XDG_CURRENT_DESKTOP and DESKTOP_SESSION; the check is
+    case-insensitive.
+    """
+    xdg   = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    dsess = os.environ.get("DESKTOP_SESSION",      "").lower()
+    combined = xdg + " " + dsess
+    if "kde" in combined:
+        return "kde"
+    if "gnome" in combined:
+        return "gnome"
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +293,18 @@ class MainMenuPage(QWidget):
         footer.setObjectName("statusLbl")
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         root.addWidget(footer)
+        root.addSpacing(16)
+
+        # ---- Tray option ----
+        tray_row = QHBoxLayout()
+        self.tray_checkbox = QCheckBox("Go to tray when closed")
+        self.tray_checkbox.setObjectName("trayCheck")
+        self.tray_checkbox.setChecked(False)
+        tray_row.addStretch()
+        tray_row.addWidget(self.tray_checkbox)
+        tray_row.addStretch()
+        root.addLayout(tray_row)
+        root.addSpacing(8)
 
 
 class WifiPage(QWidget):
@@ -545,6 +610,15 @@ class MonitorizeWindow(QMainWindow):
         self.setMinimumSize(760, 520)
         self.resize(860, 580)
 
+        # ------------------------------------------------------------------
+        # Desktop-environment detection (runs once at startup)
+        # ------------------------------------------------------------------
+        detected = detect_desktop_environment()
+        if detected:
+            self.detected_de = detected
+        else:
+            self.detected_de = self._ask_desktop_environment()
+
         # Two persistent QProcess objects for streaming
         self.process_krfb:     QProcess | None = None
         self.process_streamer: QProcess | None = None
@@ -575,6 +649,89 @@ class MonitorizeWindow(QMainWindow):
         self._stack.addWidget(self._page_usb2)       # 3
         self._stack.addWidget(self._page_streaming)  # 4
 
+        # ------------------------------------------------------------------
+        # System tray icon
+        # ------------------------------------------------------------------
+        self._tray = QSystemTrayIcon(self)
+        self._tray.setIcon(_make_tray_icon())
+        self._tray.setToolTip("Monitorize")
+
+        tray_menu = QMenu()
+        show_action = tray_menu.addAction("Show")
+        show_action.triggered.connect(self._restore_from_tray)
+        tray_menu.addSeparator()
+        quit_action = tray_menu.addAction("Quit")
+        quit_action.triggered.connect(self._quit_app)
+
+        self._tray.setContextMenu(tray_menu)
+        self._tray.activated.connect(self._tray_activated)
+        # Tray icon is shown only when the window is hidden to tray
+        self._tray.hide()
+
+    # ------------------------------------------------------------------
+    # DE selection dialog (shown only when auto-detection fails)
+    # ------------------------------------------------------------------
+
+    def _ask_desktop_environment(self) -> str:
+        """
+        Show a non-blocking QDialog asking the user to pick their DE.
+        Returns "kde" or "gnome"; exits the app if the user picks "Other".
+        """
+        dlg = QDialog()
+        dlg.setWindowTitle("Select Desktop Environment")
+        dlg.setModal(True)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(16)
+        layout.setContentsMargins(32, 28, 32, 28)
+
+        lbl = QLabel(
+            "Could not automatically detect your desktop environment.\n"
+            "Please select which one you are using:"
+        )
+        lbl.setWordWrap(True)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(14)
+
+        kde_btn   = QPushButton("KDE")
+        gnome_btn = QPushButton("GNOME")
+        other_btn = QPushButton("Other")
+
+        for btn in (kde_btn, gnome_btn, other_btn):
+            btn_row.addWidget(btn)
+
+        layout.addLayout(btn_row)
+        dlg.setMinimumWidth(380)
+
+        chosen = [""]
+
+        def pick(value):
+            chosen[0] = value
+            dlg.accept()
+
+        kde_btn.clicked.connect(lambda: pick("kde"))
+        gnome_btn.clicked.connect(lambda: pick("gnome"))
+        other_btn.clicked.connect(lambda: pick("other"))
+
+        dlg.exec()
+
+        if chosen[0] == "other" or chosen[0] == "":
+            msg = QMessageBox()
+            msg.setWindowTitle("Unsupported Desktop Environment")
+            msg.setText(
+                "Other desktop environments are a work in progress.\n"
+                "Only KDE and GNOME are supported right now."
+            )
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.exec()
+            # Exit cleanly — QApplication may not exist yet, so use sys.exit
+            sys.exit(0)
+
+        return chosen[0]   # "kde" or "gnome"
+
     # ------------------------------------------------------------------
     # Navigation
     # ------------------------------------------------------------------
@@ -583,6 +740,18 @@ class MonitorizeWindow(QMainWindow):
         self._stack.setCurrentIndex(PAGE_MAIN)
 
     def _go_wifi(self):
+        """Navigate to Wi-Fi page (KDE) or show not-supported message (GNOME)."""
+        if self.detected_de == "gnome":
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Wi-Fi Mode — GNOME")
+            msg.setText(
+                "Wi-Fi mode is not yet supported on GNOME.\n"
+                "Please use USB mode."
+            )
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.exec()
+            return
+        # KDE: show the work-in-progress Wi-Fi page
         self._stack.setCurrentIndex(PAGE_WIFI)
 
     def _go_usb1(self):
@@ -703,8 +872,15 @@ class MonitorizeWindow(QMainWindow):
                 "STREAMER", f"Process exited (code {code})"
             )
         )
+        # Choose the correct streamer script based on the detected DE
+        if self.detected_de == "gnome":
+            streamer_script = "Streamer_gnome_usb.py"
+        else:
+            # KDE (or anything else that passed detection)
+            streamer_script = "Streamer_kde_usb.py"
+
         self.process_streamer.start("python3", [
-            "Streamer_usb.py",
+            streamer_script,
             str(self._stream_width),
             str(self._stream_height),
             str(self._stream_fps),
@@ -755,12 +931,43 @@ class MonitorizeWindow(QMainWindow):
         self.process_streamer = None
 
     # ------------------------------------------------------------------
-    # Always clean up on close
+    # Tray helpers
+    # ------------------------------------------------------------------
+
+    def _tray_activated(self, reason):
+        """Restore the window when the tray icon is double-clicked."""
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._restore_from_tray()
+
+    def _restore_from_tray(self):
+        self._tray.hide()
+        self.showNormal()
+        self.activateWindow()
+
+    def _quit_app(self):
+        """Hard quit from the tray menu — always terminates processes."""
+        self._kill_stream_procs()
+        QApplication.quit()
+
+    # ------------------------------------------------------------------
+    # Close event — hide to tray or quit depending on checkbox
     # ------------------------------------------------------------------
 
     def closeEvent(self, event):
-        self._kill_stream_procs()
-        event.accept()
+        if self._page_main.tray_checkbox.isChecked():
+            # Hide to tray instead of closing
+            event.ignore()
+            self.hide()
+            self._tray.show()
+            self._tray.showMessage(
+                "Monitorize",
+                "Running in the background. Double-click the tray icon to restore.",
+                QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
+        else:
+            self._kill_stream_procs()
+            event.accept()
 
 
 # ---------------------------------------------------------------------------
